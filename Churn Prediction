@@ -1,0 +1,250 @@
+Churn Prediction – Temporal Structural Model embedded in a Logit Framework
+
+PROBLEM STATEMENT :
+
+To predict whether a customer would renew his/ her service contract with the company based on past incidents.
+
+
+BACKGROUND FOR THE ANALYSIS :
+
+The company is a leading desktop and laptop manufacturer.
+Every customer can avail a service package for a year where for a particular fee, the customer can get the device serviced (both hardware and software) for the whole year for any problems or incidents faced with the device.
+The service can be renewed for each subsequent year.
+BUSINESS VALUE :
+
+Predicting and analyzing the reasons for customer response would help in targeted marketing and customer retention strategies and improve efficiency.
+
+RESPONSE VARIABLE : Contract renewed (1) or Lost (0)
+
+FACTOR VARIABLES :
+Renewal Date
+Date of incident
+No. of incidents
+No. of response miss
+No. of visit miss
+No. of escalations
+
+DATA CLEANING :
+
+We had 2 datasets:
+Conversion set:
+Renewal Date
+Status
+Service Agreement ID
+Chan Prof
+Incident set:
+Calendar year, year and month of incident
+Service Agreement ID
+No. of cases, No. of escalation, No. of parts used, No. of single visit missed, No. of response missed
+
+MS Excel
+
+Removed multiple renewals for a same ID from the conversion file
+Why ? Because the percentage of multiple renewals was very less when compared to the whole data. So it’s simpler and more efficient to remove the duplicates.
+So now we have unique IDs , corresponding renewal status and renewal date
+How were the date variables were handled ?
+We need to find the time decay, which is the difference between renewal date, given in the conversion file and incident date, given in the incident file
+Converted the dates into MS Excel date formats and found the difference between them in term of months, using DATEDIF()…This gives us TIME DECAY
+Added both response miss and visit miss to get total no. of misses from the sides of both the customer and the company.
+PySpark
+
+HOW DO WE MERGE THE TWO DATASETS BASED ON A COMMON A VARIABLE ?
+Based on the logic of KEY – VALUE pairs, and the MAP (by Key)– REDUCE (by Value)
+Advantage of converting the datasets into PySpark data frame or SQL data frame
+Here our key is the Service Agreement ID
+We have multiple incidents for same ID in the incident table
+So we groupByKey () in the incidents data frame
+We remove all incidents that occur after the renewal date (only historic data is necessary to build the model, incidents after the renewal date becomes noise)
+And we join the two data frames with the common key – Service Agreement ID
+We select the necessary columns alone using .select() on the resultant data frame
+Extract the resulting data frame into a csv using .repartition(1).write.csv
+The PySpark code for Data Cleaning is as follows:
+
+SparkSession available as ‘spark’.
+
+p1 = sc.textFile(“/incident.txt”)
+
+p1 = p1.map(lambda x: x.split(“\t”))
+
+p1.take(2)
+
+[[u’calendar_yearmonth’, u’Year_Name’, u’Month_Name’, u’SAID’, u’number_of_Cases’, u’number_of_escalation’, u’number_of_parts_used’, u’number_of_single_visit_missed’, u’number_of_response_missed’], [u’201111′, u’2011′, u’11’, u’101261727583′, u’3′, u’0′, u’3′, u’0′, u’0′]]
+
+p2 = sc.textFile(“/Users/harinikannansenthil/Documents/MSBA/R/Data/INSY5392/book1.txt”)
+
+p2 = p2.map(lambda x: x.split(“\t”))
+
+p2.take(2)
+
+[[u’renewal_date’, u’status’, u’Service.Agreement.Id’, u’Chan.Prof’, u’year_month’, u’date’], [u’20130421′, u’Loss’, u’101261727583′, u’Direct’, u’201304′, u’21’]]
+
+header1 = p1.first()
+
+header2 = p2.first()
+
+p1 = p1.filter(lambda x: x != header1)
+
+p2 = p2.filter(lambda x: x != header2)
+
+p1.take(2)
+
+[[u’201111′, u’2011′, u’11’, u’101261727583′, u’3′, u’0′, u’3′, u’0′, u’0′], [u’201112′, u’2011′, u’12’, u’101261727583′, u’4′, u’0′, u’1′, u’0′, u’0′]]
+
+p2.take(2)
+
+[[u’20130421′, u’Loss’, u’101261727583′, u’Direct’, u’201304′, u’21’], [u’20130501′, u’Loss’, u’101318541038′, u’Direct’, u’201305′, u’1′]]
+
+from pyspark.sql import Row
+
+p1 = p1.map(lambda x: Row(yr_mon1 = x[0], yr = x[1], mon = x[2], id1 = x[3], num_cases = x[4], num_esc = x[5], num_parts = x[6], num_visitmiss = x[7], num_respmiss = x[8]))
+
+p2 = p2.map(lambda x: Row(ren_dt = x[0], status = x[1], id2 = x[2], chan = x[3], yr_mon2 = x[4], day = x[5]))
+
+p1.take(2)
+
+[Row(id1=u’101261727583′, mon=u’11’, num_cases=u’3′, num_esc=u’0′, num_parts=u’3′, num_respmiss=u’0′, num_visitmiss=u’0′, yr=u’2011′, yr_mon1=u’201111′), Row(id1=u’101261727583′, mon=u’12’, num_cases=u’4′, num_esc=u’0′, num_parts=u’1′, num_respmiss=u’0′, num_visitmiss=u’0′, yr=u’2011′, yr_mon1=u’201112′)]
+
+p2.take(2)
+
+[Row(chan=u’Direct’, day=u’21’, id2=u’101261727583′, ren_dt=u’20130421′, status=u’Loss’, yr_mon2=u’201304′), Row(chan=u’Direct’, day=u’1′, id2=u’101318541038′, ren_dt=u’20130501′, status=u’Loss’, yr_mon2=u’201305′)]
+
+df1 = p1.toDF()
+
+df1.show(5)
+
+df2 = p2.toDF()
+
+df2.show(5)
+
+sqlContext = SQLContext(sc)
+
+df1.registerTempTable(“df1temp”)
+
+df2.registerTempTable(“df2temp”)
+
+df3 = df1.join(df2, (df1.id1 == df2.id2)).select(‘id1’, ‘yr_mon1’, ‘yr_mon2’, ‘num_cases’, ‘num_esc’, ‘num_parts’, ‘num_respmiss’, ‘num_visitmiss’, ‘status’)
+
+df3.show(20)
+
+df3.repartition(1).write.csv(‘/df5.csv’)
+
+The R code for building the model and model selection is as follows :
+
+data <- read.csv("Proj2.csv", header = TRUE)
+id <- data$Id
+decay <- data$time_decay
+num_cases <- data$num_cases
+num_miss <- data$num_respmiss + data$num_visitmiss
+num_esc <- data$num_esc
+status <- data$status
+data1 <- read.csv("uni_x.csv", header = TRUE)
+status1 <- data1$status
+x <- ifelse(status1 == "Loss", 0, 1)
+
+df1 <- data.frame(id = id, n1 = decay, n2 = num_cases, n3 = num_miss, n4 = num_esc)
+uni_id <- unique(df1$id)
+length(uni_id)
+length(x)
+
+
+
+par_switch <- c(1, 1, 1, 1, 1)
+par <- c(0.02, 0.02, 0.02, 0.02, 0.02)
+
+L <- c(-Inf, -Inf, -Inf, -Inf, -Inf)
+U <- c(Inf, Inf, Inf, Inf, Inf) 
+
+for (i in 1:5){
+ if(par_switch[i] == 0) L[i] = 0
+ else L[i] = L[i]
+}
+
+for (i in 1:5){
+ if(par_switch[i] == 0) U[i] = 0.00001
+ else U[i] = U[i]
+}
+
+
+M <- function(par, x, df1) {
+ 
+ y <- rep(0,length(uni_id))
+ v <- rep(0, length(id))
+ a <- par[1]
+ b <- par[2]
+ c <- par[3]
+ d <- par[4]
+ e <- par[5]
+ p2 <- rep(-1,length(y))
+ 
+ for( j in 1:length(uni_id)) {
+ for(i in 1: length(id)) {
+ if(id[i] == uni_id[j]) v[i] <- (exp(-c*df1$n1[i]))*(log(1 + df1$n2[i]))*(1 + d*(log(1 + df1$n3[i])) + e*(log(1 + df1$n4[i])))
+ }
+ y[j] <- sum(v)
+ if(x[j] ==1) p2[j] <- (1/(1+exp(-(a+b*y[j]))))
+ else p2[j] <- 1-((1/(1+exp(-(a+b*y[j])))))
+ }
+ return (-sum(log(p2)))
+}
+
+s <- nlminb(par, M, x = x, df1 = df1, lower = L, upper = U)
+s$par
+s$objective
+s$convergence
+s$iterations
+
+
+
+COEFFICIENTS: (5 in total)
+a, b, β(for time decay), Cim(for no. of misses), Cie(for no. of escalations)
+Model selection was done using a switch function. So a change in switch will decide which model is being executed. (Switch 1 for keeping a term in the model and 0 for dropping it)
+FULL MODEL:
+Switch : (1, 1, 1, 1, 1)
+Starting Values : (0, 0, 0.01, 0.01, 0.01)
+Par:
+a = -1.401
+b = -3.13 *_𝒆_−𝟕_
+β = 0.117
+Cim = 0.083
+Cie = -0.0018
+Objective:
+7605.426
+
+NULL MODEL:
+Switch : (1, 0, 0, 0, 0)
+Starting Values : (0, 0, 0.01, 0.01, 0.01)
+Par:
+a = -0.98
+b = 0
+β = 0
+Cim = 0
+Cie = 0
+Objective:
+7842.733
+
+COMPARISON BETWEEN FULL MODEL AND NULL MODEL:
+Null $ objective > Full $ objective
+We can reject the Null and say that Full model fits significantly better than the Null model
+
+INTERPRETATION OF THE COEFFICIENTS IN FULL MODEL:
+b = -3.13 *(𝒆)−𝟕
+– Negative
+– Increase in no. of incidents increases the probability of the customer’s contract getting        lost in the order of b.
+β = 0.117
+– Positive
+– Increase in time decay (more the time in between incident and renewal date) increases        the probability of the customer’s contract getting converted in the order of β.
+Cim = 0.083
+– Positive (??!)
+– Increase in no. of misses increases the probability of the customer’s contract getting            converted in the order of Cim
+Cie = -0.0018
+– Negative
+– Increase in no. of escalations increases the probability of the customer’s contract getting    lost in the order of Cie
+
+BUSINESS IMPLICATIONS :
+
+There are two ways to improving the process of service contract retention:
+Put in money to market the product in all segments equally, no matter what the trend has been OR
+Study the model and predict to a certain probability, whether a customer would renew the contract or not .
+That way, we can recognized which segment of customers need rigorous marketing strategies and which segment needs less
+For example, if a customer has no recent incidents in the year the contract is up for renewal, then according to our model, the customer would most probably renew their contract
+This allows for informed and intelligent business decision making
